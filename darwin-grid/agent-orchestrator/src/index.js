@@ -32,7 +32,7 @@ async function callGroq(systemPrompt, userContent, retries = 3) {
         `${GROQ_BASE_URL}/chat/completions`,
         {
           model: MODEL,
-          max_tokens: 512,
+          max_tokens: 1024,
           messages: [
             { role: 'system', content: systemPrompt },
             { role: 'user', content: typeof userContent === 'string' ? userContent : JSON.stringify(userContent) },

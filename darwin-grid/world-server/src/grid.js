@@ -10,13 +10,20 @@ for (let x = 0; x < GRID_SIZE; x++) {
   }
 }
 
-GRID[18][18] = {
-  type: 'resource',
-  resourceId: 'arc_crystal_1',
-  value: 1.00,
-  claimed: false,
-  position: { x: 18, y: 18 }
-};
+let _resourceCounter = 1;
+
+function _placeResource(x, y) {
+  const id = `arc_crystal_${_resourceCounter++}`;
+  GRID[x][y] = { type: 'resource', resourceId: id, value: 1.00, claimed: false, position: { x, y } };
+  return id;
+}
+
+// Scatter 5 starting resources across the grid (avoid agent spawn corners)
+_placeResource(18, 18);
+_placeResource(2,  18);
+_placeResource(18,  2);
+_placeResource(10, 10);
+_placeResource(5,  14);
 
 function getCell(x, y) {
   if (x < 0 || x >= GRID_SIZE || y < 0 || y >= GRID_SIZE) return null;
@@ -52,4 +59,28 @@ function getAllResources() {
   return resources;
 }
 
-module.exports = { GRID, GRID_SIZE, getCell, setCell, removeResource, getAllResources };
+// Find a random empty cell away from agent spawn corners
+function getRandomEmptyCell() {
+  const empties = [];
+  for (let x = 0; x < GRID_SIZE; x++) {
+    for (let y = 0; y < GRID_SIZE; y++) {
+      if (GRID[x][y].type === 'empty') {
+        // Avoid the 3x3 agent spawn zones
+        const awayFromA = !(x <= 2 && y <= 2);
+        const awayFromB = !(x >= 17 && y >= 17);
+        if (awayFromA && awayFromB) empties.push({ x, y });
+      }
+    }
+  }
+  if (empties.length === 0) return null;
+  return empties[Math.floor(Math.random() * empties.length)];
+}
+
+function spawnRandomResource() {
+  const cell = getRandomEmptyCell();
+  if (!cell) return null;
+  const id = _placeResource(cell.x, cell.y);
+  return { resourceId: id, position: cell, value: 1.00 };
+}
+
+module.exports = { GRID, GRID_SIZE, getCell, setCell, removeResource, getAllResources, spawnRandomResource };

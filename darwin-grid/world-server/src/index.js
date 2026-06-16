@@ -7,7 +7,7 @@ const path = require('path');
 const axios = require('axios');
 const { v4: uuidv4 } = require('uuid');
 
-const { GRID_SIZE, getCell, setCell, removeResource, getAllResources } = require('./grid');
+const { GRID_SIZE, getCell, setCell, removeResource, getAllResources, spawnRandomResource } = require('./grid');
 const { findPath, travelCost, TRAVEL_COST_PER_TILE } = require('./pathfinding');
 const { AGENTS, spawnAgent, getAgent, updateAgent, effectiveBalance, isBankrupt } = require('./agentManager');
 const epochManager = require('./epochManager');
@@ -33,7 +33,11 @@ const openContracts = [];
 let companiesCache = [];
 const eventLog = [];
 const lastOrchestrationTime = new Map();
-const ORCHESTRATION_COOLDOWN_MS = 6000;
+const ORCHESTRATION_COOLDOWN_MS = 7000;
+// Stagger agent B's first call by 3.5s so the two agents never hit Groq simultaneously
+lastOrchestrationTime.set('agent_B', Date.now() - ORCHESTRATION_COOLDOWN_MS + 3500);
+const pendingRespawns = [];   // { ticksLeft: number }
+const RESPAWN_TICKS = 20;     // new crystal spawns 20 ticks after one is mined
 
 function logEvent(msg) {
   console.log(msg);
@@ -172,7 +176,15 @@ function applyDecision(agent, decision) {
       break;
     }
     case 'POST_CONTRACT': {
-      if (!decision.contract_details || !agent.companyId) return;
+      if (!decision.contract_details || !agent.companyId) {
+        // No company yet — fall back to mining
+        const fallback = findNearestResource(agent.position);
+        if (fallback) {
+          agent.currentPath = findPath(agent.position.x, agent.position.y, fallback.position.x, fallback.position.y);
+          agent.status = 'mining';
+        }
+        return;
+      }
       const cd = decision.contract_details;
       const contractId = 'c_' + uuidv4().slice(0, 8);
       axios.post(`${SETTLEMENT_URL}/escrow-contract`, {
@@ -205,7 +217,15 @@ function applyDecision(agent, decision) {
         const anyContract = openContracts.find(
           c => c.status === 'open' && c.postedBy !== agent.agent_id
         );
-        if (!anyContract) return;
+        if (!anyContract) {
+          // No contracts available — fall back to mining
+          const fallback = findNearestResource(agent.position);
+          if (fallback) {
+            agent.currentPath = findPath(agent.position.x, agent.position.y, fallback.position.x, fallback.position.y);
+            agent.status = 'mining';
+          }
+          return;
+        }
         agent.currentContract = anyContract.contractId;
         anyContract.status = 'in_progress';
         const steps = findPath(agent.position.x, agent.position.y, anyContract.targetLocation.x, anyContract.targetLocation.y);
@@ -257,6 +277,9 @@ function mineResource(agent) {
   removeResource(resourceId);
 
   logEvent(`[RESOURCE MINED] ${agent.name} mined ${resourceId} at (${agent.position.x},${agent.position.y}) +$${value}`);
+
+  // Schedule a new crystal to respawn elsewhere
+  pendingRespawns.push({ ticksLeft: RESPAWN_TICKS });
 
   if (agent.currentContract) {
     const contractId = agent.currentContract;
@@ -316,6 +339,19 @@ function tickLoop() {
 
     } catch (err) {
       console.error(`[TICK AGENT ERROR] ${agent.agent_id}:`, err.message);
+    }
+  }
+
+  // Process pending resource respawns
+  for (let i = pendingRespawns.length - 1; i >= 0; i--) {
+    pendingRespawns[i].ticksLeft--;
+    if (pendingRespawns[i].ticksLeft <= 0) {
+      pendingRespawns.splice(i, 1);
+      const spawned = spawnRandomResource();
+      if (spawned) {
+        logEvent(`[RESOURCE SPAWN] New arc crystal at (${spawned.position.x},${spawned.position.y})`);
+        broadcast({ type: 'RESOURCE_SPAWNED', resource: spawned });
+      }
     }
   }
 

@@ -775,6 +775,9 @@ function connect() {
     if (msg.type === 'RESOURCE_MINED') {
       if (resMeshes.has(msg.resourceId)) { scene.remove(resMeshes.get(msg.resourceId)); resMeshes.delete(msg.resourceId); }
     }
+    if (msg.type === 'RESOURCE_SPAWNED' && msg.resource) {
+      if (!resMeshes.has(msg.resource.resourceId)) makeResource(msg.resource);
+    }
   };
 }
 connect();
