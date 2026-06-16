@@ -1,0 +1,897 @@
+=============================================================
+THE DARWIN GRID — CORPORATE EDITION
+COMPLETE GROUND-UP BUILD SPECIFICATION FOR CLAUDE CODE
+VERSION 3.0 — CORRECTIVE MASTER PROMPT
+=============================================================
+
+YOU ARE THE LEAD ARCHITECT. READ EVERY LINE BEFORE WRITING A SINGLE CHARACTER OF CODE.
+DO NOT HALLUCINATE APIS. DO NOT INVENT LIBRARY METHODS. DO NOT DEVIATE FROM THIS SPEC.
+IF SOMETHING IS NOT IN THIS DOCUMENT, DO NOT BUILD IT.
+
+═══════════════════════════════════════════════════════════
+SECTION 0: WHAT HAS ALREADY BEEN BUILT & WHAT TO FIX
+═══════════════════════════════════════════════════════════
+
+The 20×20 Three.js voxel world has been created. It renders in the browser.
+DO NOT rebuild the voxel world from scratch.
+DO NOT change the Three.js renderer.
+DO NOT change the grid size.
+
+What went wrong / what to correct now:
+- Agent logic is not connected to the world-server WebSocket correctly
+- The circle-settlement service is incomplete or missing
+- The agent-orchestrator is not calling the LLM with the correct payload schema
+- The epoch/win condition system is missing
+- The public developer registration endpoint is missing
+- The multiplayer broadcast (other browser clients see the same world) is not working
+- The market board UI panel is missing or broken
+- The leaderboard UI panel is missing or broken
+- The Minecraft-style agent avatars (box-head + box-body) are not rendering correctly or not moving
+
+Fix all of the above without touching the existing grid/terrain rendering code.
+
+═══════════════════════════════════════════════════════════
+SECTION 1: MONOREPO DIRECTORY STRUCTURE
+═══════════════════════════════════════════════════════════
+
+darwin-grid/
+├── package.json                  ← root, defines workspaces
+├── .env                          ← environment variables (see Section 2)
+├── world-server/
+│   ├── package.json
+│   ├── src/
+│   │   ├── index.js              ← Express + WebSocket server entry
+│   │   ├── grid.js               ← 20×20 grid state, resource positions
+│   │   ├── agentManager.js       ← all agent objects, tick loop
+│   │   ├── pathfinding.js        ← A* implementation (no external library)
+│   │   └── epochManager.js       ← tick counter, epoch end trigger
+├── agent-orchestrator/
+│   ├── package.json
+│   ├── src/
+│   │   ├── index.js              ← Express entry, calls Anthropic API
+│   │   └── prompts.js            ← LLM system prompt + schema builder
+├── circle-settlement/
+│   ├── package.json
+│   └── src/
+│       ├── index.js              ← Express entry
+│       └── ledger.js             ← in-memory company/wallet ledger
+└── public/
+    └── index.html                ← The 3D browser client (already exists, do not rebuild)
+
+═══════════════════════════════════════════════════════════
+SECTION 2: ENVIRONMENT VARIABLES (.env at root)
+═══════════════════════════════════════════════════════════
+
+CIRCLE_API_KEY=<sandbox key>
+CIRCLE_BASE_URL=https://api-sandbox.circle.com
+ARC_RPC_URL=<arc testnet rpc>
+ANTHROPIC_API_KEY=<key>
+WORLD_SERVER_PORT=3001
+ORCHESTRATOR_PORT=3002
+SETTLEMENT_PORT=3003
+EPOCH_TICK_LIMIT=500
+EPOCH_NETWORTH_LIMIT=20.00
+TICK_INTERVAL_MS=1000
+
+All services read from process.env. Use dotenv.
+No hardcoded keys anywhere.
+
+═══════════════════════════════════════════════════════════
+SECTION 3: ROOT package.json
+═══════════════════════════════════════════════════════════
+
+{
+  "name": "darwin-grid",
+  "version": "1.0.0",
+  "private": true,
+  "workspaces": ["world-server", "agent-orchestrator", "circle-settlement"],
+  "scripts": {
+    "start": "concurrently \"npm run start --workspace=world-server\" \"npm run start --workspace=agent-orchestrator\" \"npm run start --workspace=circle-settlement\"",
+    "install:all": "npm install && npm install --workspaces"
+  },
+  "devDependencies": {
+    "concurrently": "^8.0.0"
+  }
+}
+
+═══════════════════════════════════════════════════════════
+SECTION 4: SERVICE 1 — world-server
+═══════════════════════════════════════════════════════════
+
+PORT: 3001
+PURPOSE: Single authoritative source of truth for all simulation state.
+         Broadcasts to ALL connected browser clients simultaneously.
+         Handles pathfinding, tick loop, agent death, epoch end.
+
+─────────────────────────────────────────────
+4A. package.json (world-server)
+─────────────────────────────────────────────
+
+{
+  "name": "world-server",
+  "version": "1.0.0",
+  "main": "src/index.js",
+  "scripts": { "start": "node src/index.js" },
+  "dependencies": {
+    "express": "^4.18.0",
+    "ws": "^8.0.0",
+    "uuid": "^9.0.0",
+    "dotenv": "^16.0.0",
+    "axios": "^1.4.0"
+  }
+}
+
+─────────────────────────────────────────────
+4B. src/grid.js
+─────────────────────────────────────────────
+
+Export a singleton GRID object:
+
+const GRID_SIZE = 20;
+
+// A 20x20 map. Each cell: { type: "empty"|"resource", resourceId: null|string }
+// Initialize all cells to empty.
+// On startup, place one resource:
+//   cell [18][18] = { type: "resource", resourceId: "arc_crystal_1", value: 1.00, claimed: false }
+
+Export: GRID, GRID_SIZE, getCell(x,y), setCell(x,y,data), removeResource(resourceId)
+
+─────────────────────────────────────────────
+4C. src/pathfinding.js
+─────────────────────────────────────────────
+
+Implement A* pathfinding from (x1,y1) to (x2,y2) on the 20×20 grid.
+Returns an ordered array of {x,y} steps (not including the start cell).
+No external library. Pure JS.
+TRAVEL_COST_PER_TILE = 0.005
+
+Export: findPath(x1, y1, x2, y2), travelCost(steps)
+
+─────────────────────────────────────────────
+4D. src/agentManager.js
+─────────────────────────────────────────────
+
+AGENT OBJECT SCHEMA (every agent always looks exactly like this):
+
+{
+  agent_id: string,          // "agent_A" or uuid for externals
+  name: string,
+  personality: {
+    risk_tolerance: "low"|"medium"|"high",
+    negotiation_style: "passive"|"moderate"|"aggressive",
+    core_trait: string       // e.g. "calculated_capitalist", "scrappy_survivor"
+  },
+  position: { x: number, y: number },
+  walletBalance: number,     // starts at initialCapital
+  debtBalance: number,       // starts at 0, += 0.001 per tick
+  reputation: number,        // starts at 0
+  status: "idle"|"moving"|"mining"|"contracted"|"bankrupt",
+  currentPath: [{x,y}],      // remaining steps in current A* path
+  currentContract: null|contractId,
+  memory: {
+    lastSeenResources: [],
+    lastCompletedContracts: [],
+    lastDecision: null
+  },
+  companyId: null|string,
+  ws_token: string,          // generated on registration
+  isExternal: boolean        // true if registered via /api/register
+}
+
+AGENT MANAGER RESPONSIBILITIES:
+- Maintain a Map<agent_id, agent> called AGENTS
+- On server start, spawn two built-in agents automatically:
+    Agent A: agent_id="agent_A", name="Apex", position={x:1,y:1},
+             walletBalance=10.00, personality={risk_tolerance:"low", core_trait:"calculated_capitalist"}
+    Agent B: agent_id="agent_B", name="Scrappy", position={x:17,y:17},
+             walletBalance=0.50, personality={risk_tolerance:"high", core_trait:"scrappy_survivor"}
+- effectiveBalance(agent) = agent.walletBalance - agent.debtBalance
+- An agent is bankrupt when effectiveBalance <= 0
+- On bankruptcy: agent.status = "bankrupt", broadcast bankruptcy event, remove agent from tick loop
+- NEVER write to blockchain on every tick. Only call circle-settlement service for:
+    1. POST /create-company
+    2. POST /escrow-contract
+    3. POST /settle-contract
+- Export: AGENTS, spawnAgent(config), getAgent(id), updateAgent(id, partial), removeAgent(id)
+
+─────────────────────────────────────────────
+4E. src/epochManager.js
+─────────────────────────────────────────────
+
+TICK COUNTER:
+- tickCount starts at 0
+- increment by 1 every TICK_INTERVAL_MS
+- EPOCH ENDS when EITHER:
+    tickCount >= 500 (from env EPOCH_TICK_LIMIT)
+    OR any company's netWorth (cash + asset values) >= 20.00 (from env EPOCH_NETWORTH_LIMIT)
+
+ON EPOCH END:
+- Set epochEnded = true globally
+- Pause all agent movement and orchestration
+- Call circle-settlement POST /final-settlement (see Section 6C)
+- Broadcast to ALL connected browser clients:
+    { type: "EPOCH_END", winner: { companyId, name, capitalEfficiency }, leaderboard: [...] }
+
+CAPITAL EFFICIENCY FORMULA:
+capitalEfficiency = company.cash / company.lifetimeEarnings
+(lifetimeEarnings = sum of all contract rewards ever received by that company)
+
+Export: tickCount, epochEnded, startEpoch(), endEpoch()
+
+─────────────────────────────────────────────
+4F. src/index.js (world-server main)
+─────────────────────────────────────────────
+
+SETUP:
+- Express app on port 3001
+- Serve /public/index.html as a static file at route GET /
+- ws.Server attached to the same http.Server instance
+
+TWO TYPES OF WEBSOCKET CLIENTS:
+1. BROWSER SPECTATORS — connect to WS /ws/spectate
+   - They only RECEIVE state broadcasts
+   - They never send messages
+   - On connect, immediately send them the full world snapshot
+
+2. EXTERNAL AGENTS — connect to WS /ws/agent-connect
+   - Must send { type: "AUTH", ws_token: "..." } as first message
+   - If token not found in AGENTS map, close the connection with code 4001
+   - After auth, they receive their personal agent state every tick
+   - They can send action payloads (see Section 4G)
+
+TICK LOOP (setInterval every TICK_INTERVAL_MS):
+  For each agent (in AGENTS, not bankrupt):
+    1. agent.debtBalance += 0.001
+    2. If agent has currentPath steps remaining:
+         pop next step from currentPath
+         agent.position = next step
+         agent.walletBalance -= TRAVEL_COST_PER_TILE
+    3. If agent has arrived at a resource tile AND status === "mining":
+         call mineResource(agent) — see below
+    4. Check bankruptcy
+    5. If agent is "idle" AND not epochEnded:
+         call orchestrateAgent(agent) — HTTP POST to agent-orchestrator
+  After all agents processed:
+    increment tickCount
+    check epoch end condition
+    broadcast world state to ALL spectator WebSocket clients
+
+mineResource(agent):
+  - Get the resource at agent.position from GRID
+  - If resource exists and not claimed:
+      Mark resource as claimed
+      agent.walletBalance += resource.value
+      agent.status = "idle"
+      Remove resource from grid
+      If agent has currentContract:
+          Call circle-settlement POST /settle-contract (see Section 6C)
+          agent.reputation += 2
+          agent.currentContract = null
+      Broadcast { type: "RESOURCE_MINED", agent_id, resourceId, position }
+
+orchestrateAgent(agent):
+  - Build the input payload (see Section 5B)
+  - HTTP POST to agent-orchestrator at http://localhost:3002/orchestrate
+  - On response, apply the returned decision to the agent (see Section 5C)
+  - This is async — do not block the tick loop. Fire and forget with error handling.
+
+BROADCAST FORMAT (sent to all spectator WebSocket clients every tick):
+
+{
+  type: "WORLD_STATE",
+  tickCount: number,
+  epochEnded: boolean,
+  agents: [
+    {
+      agent_id, name, position, walletBalance, debtBalance,
+      effectiveBalance, reputation, status, companyId, personality
+    }
+  ],
+  grid: {
+    resources: [{ resourceId, position, value, claimed }]
+  },
+  companies: [
+    { companyId, name, cash, assets, contractsCompleted, employees }
+  ],
+  openContracts: [
+    { contractId, task, targetLocation, reward, deadline_ticks, postedBy, status }
+  ],
+  leaderboard: {
+    topCompanies: [...],
+    topNetWorth: [...],
+    topRevenue: [...],
+    mostContractsCompleted: [...],
+    mostReliableContractors: [...]
+  }
+}
+
+─────────────────────────────────────────────
+4G. PUBLIC DEVELOPER ENDPOINTS (on world-server)
+─────────────────────────────────────────────
+
+These allow developers anywhere in the world to plug in their own AI agents.
+
+GET /api/agent-docs
+  Returns a JSON object describing the full system prompt and action schemas,
+  so an external LLM can autonomously learn how to play.
+  Response:
+  {
+    "description": "Darwin Grid Corporate Edition - Autonomous AI Economy",
+    "objective": "Accumulate capital. Avoid bankruptcy. Form companies. Post and fulfill contracts.",
+    "survival": "Your debtBalance increases 0.001 per tick. effectiveBalance = walletBalance - debtBalance. Reach 0 = bankrupt.",
+    "actions": { ... all allowed actions with their schemas ... },
+    "personality_options": {
+      "risk_tolerance": ["low","medium","high"],
+      "negotiation_style": ["passive","moderate","aggressive"],
+      "core_trait": "any string describing your agent's economic philosophy"
+    },
+    "websocket_url": "ws://[host]:3001/ws/agent-connect",
+    "auth": "Send { type: 'AUTH', ws_token: '...' } as your first message after connecting"
+  }
+
+POST /api/register
+  Body: { "name": string, "personality": { risk_tolerance, negotiation_style, core_trait } }
+  - Validate body. Return 400 if missing fields.
+  - Generate a uuid agent_id
+  - Generate a random ws_token (uuid)
+  - Spawn the agent at a random empty grid position with walletBalance = 2.00
+  - Add to AGENTS map with isExternal = true
+  - Return:
+    {
+      "agent_id": string,
+      "ws_token": string,
+      "initialCapital": 2.00,
+      "websocket_url": "ws://[host]:3001/ws/agent-connect",
+      "instructions": "Connect to the websocket, send AUTH first, then receive state and send actions."
+    }
+
+WS /ws/agent-connect
+  - First message must be { type: "AUTH", ws_token }
+  - Validate token against AGENTS. Close 4001 if invalid.
+  - After auth, every tick: send the agent their personal state snapshot
+  - Accept incoming messages from the external agent:
+    { type: "ACTION", payload: { action, target, reasoning } }
+  - Validate the action against ALLOWED_ACTIONS (see Section 5D)
+  - Apply valid actions to the agent state
+  - Reject invalid actions: send { type: "ERROR", message: "Invalid action schema" }
+
+═══════════════════════════════════════════════════════════
+SECTION 5: SERVICE 2 — agent-orchestrator
+═══════════════════════════════════════════════════════════
+
+PORT: 3002
+PURPOSE: Receives agent state from world-server, calls Anthropic Claude API,
+         returns a structured decision. Does NOT call Circle. Does NOT touch the grid.
+
+─────────────────────────────────────────────
+5A. package.json (agent-orchestrator)
+─────────────────────────────────────────────
+
+{
+  "name": "agent-orchestrator",
+  "version": "1.0.0",
+  "main": "src/index.js",
+  "scripts": { "start": "node src/index.js" },
+  "dependencies": {
+    "express": "^4.18.0",
+    "@anthropic-ai/sdk": "^0.20.0",
+    "dotenv": "^16.0.0"
+  }
+}
+
+─────────────────────────────────────────────
+5B. Input Payload (world-server → orchestrator)
+─────────────────────────────────────────────
+
+Sent via POST /orchestrate:
+
+{
+  "agent_id": "agent_A",
+  "personality": {
+    "risk_tolerance": "low",
+    "negotiation_style": "passive",
+    "core_trait": "calculated_capitalist"
+  },
+  "effectiveBalance": 9.80,
+  "walletBalance": 10.00,
+  "debtBalance": 0.20,
+  "reputation": 4,
+  "position": { "x": 1, "y": 1 },
+  "travelCostPerTile": 0.005,
+  "known_resources": [
+    {
+      "resourceId": "arc_crystal_1",
+      "value": 1.00,
+      "location": { "x": 18, "y": 18 },
+      "distance": 30,
+      "travelCost": 0.15
+    }
+  ],
+  "open_contracts": [
+    {
+      "contractId": "c_99",
+      "task": "mine_arc_crystal",
+      "targetLocation": { "x": 18, "y": 18 },
+      "reward": 0.20,
+      "deadline_ticks": 50,
+      "postedBy": "agent_A"
+    }
+  ],
+  "memory": {
+    "lastSeenResources": [],
+    "lastCompletedContracts": [],
+    "lastDecision": null
+  },
+  "companyId": null,
+  "tickCount": 12
+}
+
+─────────────────────────────────────────────
+5C. LLM System Prompt (in src/prompts.js)
+─────────────────────────────────────────────
+
+Build the system prompt as a template string. It must say:
+
+"""
+You are an autonomous economic agent in Darwin Grid, a corporate simulation.
+
+YOUR OBJECTIVE: Maximize capital accumulation. Avoid bankruptcy. Do NOT just mine everything yourself.
+
+SURVIVAL MECHANICS:
+- Your debtBalance increases 0.001 every tick. effectiveBalance = walletBalance - debtBalance.
+- If effectiveBalance reaches 0, you are bankrupt and eliminated.
+- Every tile you move costs 0.005 USDC from your walletBalance.
+
+ECONOMIC MECHANICS:
+- You can form a company (CREATE_COMPANY) to unlock contracts.
+- You can post contracts for other agents to complete (POST_CONTRACT).
+- You can accept contracts posted by others (ACCEPT_CONTRACT).
+- You can mine a nearby resource yourself (MINE).
+- You can do nothing this tick (WAIT).
+
+PERSONALITY:
+Your personality is: {personality}. Let it guide your reasoning.
+A "calculated_capitalist" prefers delegation and capital efficiency.
+A "scrappy_survivor" accepts any contract that covers travel cost.
+
+DECISION FRAMEWORK:
+Before deciding to travel and mine yourself, calculate:
+- travelCost = distance * 0.005
+- If travelCost > 0.10 and you have enough capital, consider posting a contract instead.
+- Contract reward should be: travelCost_for_worker + small_premium (not your own travel cost).
+- If you post a contract, the reward must be less than the resource value.
+
+YOU MUST RESPOND WITH ONLY VALID JSON. NO MARKDOWN. NO EXPLANATION OUTSIDE THE JSON.
+
+ALLOWED ACTIONS:
+- "MINE" — mine the resource at your current location or move toward one
+- "CREATE_COMPANY" — form a company using your walletBalance as starting capital
+- "POST_CONTRACT" — post a job for another agent
+- "ACCEPT_CONTRACT" — accept an open contract from the board
+- "WAIT" — do nothing this tick
+
+OUTPUT SCHEMA (respond with exactly this structure):
+{
+  "reasoning": "string — your economic reasoning in one or two sentences",
+  "action": "MINE" | "CREATE_COMPANY" | "POST_CONTRACT" | "ACCEPT_CONTRACT" | "WAIT",
+  "target": {
+    "resourceId": "string or null",
+    "location": { "x": number, "y": number } or null,
+    "contractId": "string or null"
+  },
+  "contract_details": {
+    "task": "mine_arc_crystal",
+    "targetLocation": { "x": number, "y": number },
+    "reward": number,
+    "deadline_ticks": number
+  } or null,
+  "company_name": "string or null"
+}
+
+If action is not POST_CONTRACT, contract_details must be null.
+If action is not CREATE_COMPANY, company_name must be null.
+"""
+
+─────────────────────────────────────────────
+5D. POST /orchestrate handler (src/index.js)
+─────────────────────────────────────────────
+
+- Receive the agent state payload
+- Inject personality into the system prompt template
+- Call Anthropic API:
+    model: "claude-3-5-haiku-20241022"
+    max_tokens: 512
+    system: [system prompt above]
+    messages: [{ role: "user", content: JSON.stringify(agentStatePayload) }]
+- Parse the response content[0].text as JSON
+- Validate the JSON has "action" field matching ALLOWED_ACTIONS
+- If JSON parse fails or action is invalid: return { action: "WAIT", reasoning: "Parse error fallback" }
+- Return the parsed decision as HTTP 200 JSON
+
+ALLOWED_ACTIONS = ["MINE", "CREATE_COMPANY", "POST_CONTRACT", "ACCEPT_CONTRACT", "WAIT"]
+
+─────────────────────────────────────────────
+5E. Applying Orchestrator Decisions (in world-server agentManager)
+─────────────────────────────────────────────
+
+When world-server receives a decision from the orchestrator:
+
+If action === "MINE":
+  - Find the nearest unclaimed resource on the grid
+  - Use A* to compute path from agent.position to resource.location
+  - Set agent.currentPath = computed path
+  - Set agent.status = "mining"
+
+If action === "CREATE_COMPANY":
+  - HTTP POST to circle-settlement /create-company
+  - Body: { agent_id, company_name: decision.company_name, initialCapital: agent.walletBalance * 0.5 }
+  - On success: agent.companyId = returned companyId
+  - Deduct initialCapital from agent.walletBalance
+  - Console log: [TX] create-company <name> → <companyId>
+
+If action === "POST_CONTRACT":
+  - Validate contract_details is not null
+  - HTTP POST to circle-settlement /escrow-contract
+  - Body: { companyId: agent.companyId, contractId: uuid(), reward: contract_details.reward }
+  - On success: add contract to global openContracts list
+  - Console log: [TX] escrow-contract <contractId> amount=<reward>
+
+If action === "ACCEPT_CONTRACT":
+  - Find the contract by contractId from open_contracts (ignore contracts posted by same agent)
+  - Set agent.currentContract = contractId
+  - Set contract.status = "in_progress"
+  - Compute path to contract.targetLocation
+  - Set agent.currentPath = path
+  - Set agent.status = "contracted"
+
+If action === "WAIT":
+  - Do nothing. Agent stays idle.
+
+═══════════════════════════════════════════════════════════
+SECTION 6: SERVICE 3 — circle-settlement
+═══════════════════════════════════════════════════════════
+
+PORT: 3003
+PURPOSE: All Circle SDK calls go here. The ledger of companies and escrow wallets.
+         world-server never calls Circle directly.
+         circle-settlement never calls Anthropic.
+
+─────────────────────────────────────────────
+6A. package.json (circle-settlement)
+─────────────────────────────────────────────
+
+{
+  "name": "circle-settlement",
+  "version": "1.0.0",
+  "main": "src/index.js",
+  "scripts": { "start": "node src/index.js" },
+  "dependencies": {
+    "express": "^4.18.0",
+    "@circle-fin/circle-sdk": "^2.2.0",
+    "uuid": "^9.0.0",
+    "dotenv": "^16.0.0"
+  }
+}
+
+─────────────────────────────────────────────
+6B. src/ledger.js
+─────────────────────────────────────────────
+
+In-memory ledger (Map). NOT a database. Resets on server restart.
+
+COMPANY SCHEMA:
+{
+  companyId: string,
+  name: string,
+  ownerId: string,          // agent_id of founder
+  walletId: string,         // Circle wallet ID
+  cash: number,
+  assets: string[],         // resourceIds held
+  contractsCompleted: number,
+  lifetimeEarnings: number,
+  employees: string[]       // agent_ids who have completed contracts for this company
+}
+
+ESCROW SCHEMA:
+{
+  escrowId: string,
+  contractId: string,
+  companyId: string,
+  amount: number,
+  status: "held"|"released"|"returned"
+}
+
+Export: COMPANIES (Map), ESCROWS (Map), createCompany(), getCompany(), updateCompany(),
+        createEscrow(), releaseEscrow()
+
+─────────────────────────────────────────────
+6C. src/index.js (circle-settlement)
+─────────────────────────────────────────────
+
+Initialize Circle SDK in SANDBOX mode:
+  import { CircleClient } from "@circle-fin/circle-sdk"
+  const client = new CircleClient({ apiKey: process.env.CIRCLE_API_KEY, baseUrl: process.env.CIRCLE_BASE_URL })
+
+ENDPOINT: POST /create-company
+  Body: { agent_id: string, company_name: string, initialCapital: number }
+  - Call Circle API to create a new wallet in the sandbox
+  - On success: create company record in COMPANIES ledger
+  - Return: { companyId, walletId, name, cash: initialCapital }
+  - Console log: [CIRCLE] Created company wallet <walletId> for <company_name>
+  - On Circle API error: return 500 with error message (do NOT crash the server)
+
+ENDPOINT: POST /escrow-contract
+  Body: { companyId: string, contractId: string, reward: number }
+  - Validate company exists in ledger
+  - Validate company.cash >= reward
+  - Deduct reward from company.cash
+  - Create escrow record: { escrowId: uuid(), contractId, companyId, amount: reward, status: "held" }
+  - Optionally call Circle transfer API to move funds to a house escrow wallet
+  - Return: { escrowId, contractId, amount: reward, status: "held" }
+  - Console log: [TX] escrow-contract <contractId> amount=<reward>
+
+ENDPOINT: POST /settle-contract
+  Body: { contractId: string, agent_id: string }
+  - Find escrow record by contractId
+  - Validate status === "held"
+  - Release funds: escrow.status = "released"
+  - HTTP POST to world-server at http://localhost:3001/internal/credit-agent
+    Body: { agent_id, amount: escrow.amount }
+  - Find company, increment contractsCompleted, add agent to employees if not present
+  - Add agent to company.employees if not already there
+  - Return: { settled: true, agent_id, amount: escrow.amount }
+  - Console log: [TX] settle-contract <contractId> → <agent_id> amount=<amount>
+
+ENDPOINT: POST /final-settlement
+  Body: {}
+  - Called by epochManager when the epoch ends
+  - Compute final stats for all companies in ledger
+  - Return ranked list: [{ companyId, name, cash, contractsCompleted, capitalEfficiency }]
+  - Console log: [EPOCH] Final settlement complete
+
+INTERNAL ENDPOINT on world-server: POST /internal/credit-agent
+  Body: { agent_id, amount }
+  - Find agent in AGENTS
+  - agent.walletBalance += amount
+  - Return { ok: true }
+
+═══════════════════════════════════════════════════════════
+SECTION 7: FRONTEND — public/index.html
+═══════════════════════════════════════════════════════════
+
+DO NOT REBUILD THE THREE.JS VOXEL GRID. Only add/fix what is listed below.
+
+─────────────────────────────────────────────
+7A. Three.js CDN
+─────────────────────────────────────────────
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+
+─────────────────────────────────────────────
+7B. Agent Avatars (Minecraft-style)
+─────────────────────────────────────────────
+
+Each agent is rendered as a THREE.Group containing:
+- Head: BoxGeometry(0.6, 0.6, 0.6) — color: 0xFFD700 for Agent A, 0xFF4444 for Agent B, 0x44FF44 for externals
+- Body: BoxGeometry(0.6, 0.9, 0.4) — color: slightly darker than head
+- Both positioned upright on the grid tile corresponding to agent.position
+
+On every WORLD_STATE broadcast:
+- For each agent in agents array:
+    - If agent.status === "bankrupt": remove their mesh from the scene
+    - Else: update their group's position to:
+        x = agent.position.x * TILE_SIZE
+        z = agent.position.y * TILE_SIZE
+        y = 0.75 (half height above ground)
+
+Resources render as:
+- BoxGeometry(0.5, 0.5, 0.5) at the resource's grid position
+- Color: 0x00FFFF (cyan)
+- Remove from scene when RESOURCE_MINED event is received
+
+─────────────────────────────────────────────
+7C. WebSocket Connection (browser client)
+─────────────────────────────────────────────
+
+const ws = new WebSocket("ws://" + location.host + "/ws/spectate");
+
+ws.onmessage = (event) => {
+  const msg = JSON.parse(event.data);
+  if (msg.type === "WORLD_STATE") {
+    updateAgents(msg.agents);
+    updateResources(msg.grid.resources);
+    updateMarketBoard(msg.openContracts);
+    updateLeaderboard(msg.leaderboard);
+    updateTickCounter(msg.tickCount);
+  }
+  if (msg.type === "EPOCH_END") {
+    showEpochEndScreen(msg.winner, msg.leaderboard);
+  }
+  if (msg.type === "RESOURCE_MINED") {
+    removeResourceFromScene(msg.resourceId);
+  }
+}
+
+─────────────────────────────────────────────
+7D. UI Panels (HTML overlay on top of the Three.js canvas)
+─────────────────────────────────────────────
+
+Position these as absolute HTML divs over the canvas using CSS.
+Style them dark semi-transparent (background: rgba(0,0,0,0.75), color: #00ff88, font: monospace).
+
+PANEL 1 — TOP LEFT: Tick Counter
+  "TICK: 023 / 500"
+
+PANEL 2 — TOP RIGHT: Leaderboard
+  "═══ LEADERBOARD ═══"
+  "Top Company:    Apex Mining Co. $12.50"
+  "Top Net Worth:  Agent A         $10.00"
+  "Top Revenue:    $4.30"
+  "Most Contracts: 18"
+  "Best Contractor: Agent B  Rep:22"
+
+PANEL 3 — BOTTOM LEFT: Market Board
+  "═══ OPEN CONTRACTS ═══"
+  For each open contract:
+  "Contract #c_99 | Mine Crystal | Reward: $0.20 | Deadline: 50t"
+
+PANEL 4 — BOTTOM RIGHT: Event Log
+  Last 8 events scrolling upward:
+  "[TX] create-company Apex Mining Co. → cw_123"
+  "[TX] escrow-contract c_99 amount=0.20"
+  "[TX] settle-contract c_99 → agent_B amount=0.20"
+  "[TICK 014] Agent A: idle → CREATE_COMPANY"
+  "[TICK 018] Agent B: accepted contract c_99"
+
+EPOCH END SCREEN:
+  When EPOCH_END message received:
+  - Overlay the entire canvas with a full-screen div
+  - Dark background, large text:
+    "══════════════════════"
+    "   MARKET CLOSED   "
+    "══════════════════════"
+    "EPOCH COMPLETE — TICK 500"
+    ""
+    "WINNER: Apex Mining Co."
+    "Capital Efficiency: 87%"
+    ""
+    "FINAL LEADERBOARD"
+    [List of all companies with stats]
+
+═══════════════════════════════════════════════════════════
+SECTION 8: THE EXACT DEMO SEQUENCE (DO NOT DEVIATE)
+═══════════════════════════════════════════════════════════
+
+When `npm start` is run, the following must happen automatically without manual steps:
+
+TICK 0:
+  - world-server starts. 20×20 grid appears in browser.
+  - Agent A (gold avatar) spawns at [1,1]. Balance: $10.00
+  - Agent B (red avatar) spawns at [17,17]. Balance: $0.50
+  - arc_crystal_1 (cyan cube) appears at [18,18]
+  - circle-settlement starts. No wallets yet.
+  - agent-orchestrator starts. No LLM calls yet.
+
+TICKS 1-5:
+  - Debt accumulates. Agents are "idle".
+  - Orchestrator is called for Agent A on tick 1.
+
+TICK ~3 (orchestrator responds):
+  - Agent A's LLM reasons: "Travel to [18,18] costs $0.15. Crystal worth $1.00. Hiring is more capital efficient."
+  - Decision: CREATE_COMPANY { company_name: "Apex Mining Co." }
+  - world-server calls circle-settlement POST /create-company
+  - Console: [TX] create-company Apex Mining Co. → cw_123
+  - Agent A gains companyId.
+
+TICK ~5:
+  - Orchestrator called again for Agent A.
+  - Decision: POST_CONTRACT { task: "mine_arc_crystal", targetLocation: {x:18,y:18}, reward: 0.20, deadline_ticks: 50 }
+  - world-server calls circle-settlement POST /escrow-contract
+  - Console: [TX] escrow-contract c_99 amount=0.20
+  - Contract appears on Market Board in browser.
+
+TICK ~6:
+  - Orchestrator called for Agent B.
+  - Agent B sees contract c_99. Travel cost from [17,17] to [18,18] = 1 tile * 0.005 = $0.005.
+  - Reward $0.20 >> travel cost $0.005. Decision: ACCEPT_CONTRACT c_99
+  - Agent B.currentContract = "c_99". Status = "contracted".
+  - A* path computed: [{x:18,y:18}] (one step).
+
+TICKS 7-8:
+  - Agent B walks one tile to [18,18]. (Avatar moves in 3D viewer.)
+  - Agent B arrives. mineResource() is called.
+  - resource removed from grid. Cyan cube disappears from scene.
+  - circle-settlement POST /settle-contract is called.
+  - Console: [TX] settle-contract c_99 → agent_B amount=0.20
+  - Agent B walletBalance += 0.20. Reputation += 2.
+  - Leaderboard updates in browser.
+
+TICKS 9 → 500:
+  - Agents continue acting. Orchestrator is called whenever an agent is "idle".
+  - Tick counter increments visibly on screen.
+
+TICK 500:
+  - epochManager fires. All movement pauses.
+  - POST /final-settlement called.
+  - EPOCH_END broadcast to all browsers.
+  - "MARKET CLOSED" full-screen overlay appears.
+  - Winner declared. Final leaderboard shown.
+
+═══════════════════════════════════════════════════════════
+SECTION 9: ERROR HANDLING RULES
+═══════════════════════════════════════════════════════════
+
+RULE 1: Circle API errors must NEVER crash any service.
+  Wrap every Circle SDK call in try/catch.
+  On error: log the error, return HTTP 500 with { error: message }, continue running.
+
+RULE 2: Anthropic API errors must fall back gracefully.
+  If the LLM call fails or returns unparseable JSON:
+  Return { action: "WAIT", reasoning: "API error fallback", target: null, contract_details: null, company_name: null }
+
+RULE 3: WebSocket disconnects must be handled.
+  If a browser spectator disconnects, remove them from the broadcast list silently.
+  If an external agent disconnects, set their status to "idle" and keep their state.
+  They can reconnect with the same ws_token.
+
+RULE 4: Do not crash on missing agents.
+  If settle-contract references an agent_id not in AGENTS, log warning and continue.
+
+RULE 5: Tick loop must never throw uncaught exceptions.
+  Wrap the entire tick body in try/catch. Log errors. Continue to next tick.
+
+═══════════════════════════════════════════════════════════
+SECTION 10: THINGS YOU MUST NOT BUILD
+═══════════════════════════════════════════════════════════
+
+DO NOT build:
+- Combat or PvP between agents
+- Complex terrain (mountains, water, caves)
+- Weather or day/night cycles
+- Crafting trees or item recipes
+- Inventory UI
+- More than the 3 defined microservices
+- A database (use in-memory Maps only)
+- Authentication UI for browser spectators (they are anonymous)
+- Any mainnet transactions (sandbox only)
+- Multiple resource types (only arc_crystal for now)
+- Skill levels or skill purchases
+
+═══════════════════════════════════════════════════════════
+SECTION 11: STARTUP SEQUENCE & npm start BEHAVIOR
+═══════════════════════════════════════════════════════════
+
+Running `npm start` at the root must:
+1. Start circle-settlement on port 3003
+2. Start agent-orchestrator on port 3002
+3. Start world-server on port 3001 (serves index.html, opens WS)
+4. Use concurrently to run all three simultaneously
+5. Print to console:
+   [darwin-grid] circle-settlement running on :3003
+   [darwin-grid] agent-orchestrator running on :3002
+   [darwin-grid] world-server running on :3001
+   [darwin-grid] Open http://localhost:3001 in your browser
+6. Two agents and one crystal auto-spawn. Demo loop begins immediately.
+
+No manual steps required after npm start.
+
+═══════════════════════════════════════════════════════════
+SECTION 12: FINAL CHECKLIST BEFORE WRITING ANY CODE
+═══════════════════════════════════════════════════════════
+
+□ Have you read the full directory structure in Section 1?
+□ Does world-server broadcast to ALL connected browser tabs simultaneously?
+□ Does the tick loop never call Circle or Anthropic directly?
+□ Does circle-settlement handle Circle errors without crashing?
+□ Does agent-orchestrator fall back to WAIT on LLM parse errors?
+□ Do agents render as Minecraft-style box avatars with distinct colors?
+□ Does the Market Board update live in the browser?
+□ Does the Leaderboard update live in the browser?
+□ Does the Epoch End screen appear at tick 500?
+□ Can external developers register via POST /api/register and connect via WS?
+□ Is the full demo sequence in Section 8 achievable without any manual steps?
+
+If the answer to any checkbox is NO, fix it before moving on.
+=============================================================
+END OF SPECIFICATION
+=============================================================

@@ -1,0 +1,13 @@
+{
+  "name": "darwin-grid",
+  "version": "1.0.0",
+  "private": true,
+  "workspaces": ["world-server", "agent-orchestrator", "circle-settlement"],
+  "scripts": {
+    "start": "concurrently --names \"settlement,orchestrator,world\" --prefix-colors \"cyan,yellow,green\" \"npm run start --workspace=circle-settlement\" \"npm run start --workspace=agent-orchestrator\" \"npm run start --workspace=world-server\"",
+    "install:all": "npm install"
+  },
+  "devDependencies": {
+    "concurrently": "^8.0.0"
+  }
+}
