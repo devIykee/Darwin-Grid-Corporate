@@ -1,0 +1,2 @@
+- [Darwin Grid rate limiting](darwin-grid-rate-limit.md) — Groq 429s flood if agents are orchestrated every tick; use per-agent cooldown + exponential backoff retries.
+- [Darwin Grid npm isolation](darwin-grid-npm.md) — Darwin Grid is a standalone npm workspace inside the pnpm monorepo; run `npm install` from darwin-grid/, not pnpm.

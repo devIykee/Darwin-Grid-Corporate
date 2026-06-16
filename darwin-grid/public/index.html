@@ -1,0 +1,517 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Darwin Grid — Corporate Edition</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #000; overflow: hidden; font-family: 'Courier New', monospace; }
+  #canvas { display: block; width: 100vw; height: 100vh; }
+
+  .panel {
+    position: absolute;
+    background: rgba(0,0,0,0.82);
+    border: 1px solid #00ff88;
+    color: #00ff88;
+    font-family: 'Courier New', monospace;
+    font-size: 12px;
+    padding: 10px 14px;
+    pointer-events: none;
+    line-height: 1.6;
+    box-shadow: 0 0 12px rgba(0,255,136,0.15), inset 0 0 20px rgba(0,0,0,0.5);
+  }
+  .panel-title {
+    color: #00ffcc;
+    font-size: 13px;
+    font-weight: bold;
+    border-bottom: 1px solid #00ff8855;
+    margin-bottom: 6px;
+    padding-bottom: 4px;
+    letter-spacing: 2px;
+  }
+  .panel-row { color: #aaffdd; margin: 2px 0; }
+  .panel-row span { color: #00ff88; }
+  .panel-row.bankrupt { color: #ff4444; }
+
+  #tick-panel {
+    top: 16px; left: 16px;
+    min-width: 180px;
+  }
+  #tick-display {
+    font-size: 22px;
+    color: #00ffcc;
+    letter-spacing: 3px;
+    margin-top: 4px;
+  }
+  #agent-panel {
+    top: 16px; left: 220px;
+    min-width: 220px;
+  }
+
+  #leaderboard-panel {
+    top: 16px; right: 16px;
+    min-width: 260px;
+  }
+  #market-panel {
+    bottom: 16px; left: 16px;
+    min-width: 280px;
+    max-height: 200px;
+    overflow: hidden;
+  }
+  #event-panel {
+    bottom: 16px; right: 16px;
+    min-width: 340px;
+    max-height: 200px;
+    overflow: hidden;
+  }
+
+  #epoch-overlay {
+    display: none;
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(0,0,0,0.92);
+    color: #00ff88;
+    font-family: 'Courier New', monospace;
+    justify-content: center;
+    align-items: center;
+    flex-direction: column;
+    z-index: 1000;
+    text-align: center;
+    padding: 40px;
+  }
+  #epoch-overlay.active { display: flex; }
+  #epoch-overlay h1 { font-size: 28px; color: #00ffcc; letter-spacing: 6px; margin-bottom: 8px; }
+  #epoch-overlay .divider { color: #00ff8866; font-size: 20px; margin: 8px 0; }
+  #epoch-overlay .winner { font-size: 18px; color: #FFD700; margin: 12px 0; }
+  #epoch-overlay .efficiency { color: #aaffdd; margin: 4px 0; }
+  #epoch-overlay .lb-title { color: #00ffcc; margin-top: 20px; margin-bottom: 8px; letter-spacing: 3px; }
+  #epoch-overlay .lb-row { color: #aaffdd; margin: 3px 0; }
+
+  .status-idle    { color: #aaffdd; }
+  .status-moving  { color: #ffff44; }
+  .status-mining  { color: #ff8800; }
+  .status-contracted { color: #44ffff; }
+  .status-bankrupt { color: #ff4444; }
+</style>
+</head>
+<body>
+
+<canvas id="canvas"></canvas>
+
+<!-- PANEL 1: Tick Counter -->
+<div class="panel" id="tick-panel">
+  <div class="panel-title">⬡ DARWIN GRID</div>
+  <div id="tick-display">TICK: 000 / 500</div>
+  <div class="panel-row" id="epoch-status" style="margin-top:4px;font-size:11px;color:#888;">SIMULATION RUNNING</div>
+</div>
+
+<!-- PANEL: Agent Status -->
+<div class="panel" id="agent-panel">
+  <div class="panel-title">AGENTS</div>
+  <div id="agent-list"></div>
+</div>
+
+<!-- PANEL 2: Leaderboard -->
+<div class="panel" id="leaderboard-panel">
+  <div class="panel-title">═══ LEADERBOARD ═══</div>
+  <div id="leaderboard-content">
+    <div class="panel-row">Waiting for data...</div>
+  </div>
+</div>
+
+<!-- PANEL 3: Market Board -->
+<div class="panel" id="market-panel">
+  <div class="panel-title">═══ OPEN CONTRACTS ═══</div>
+  <div id="market-content">
+    <div class="panel-row" style="color:#555;">No contracts posted yet</div>
+  </div>
+</div>
+
+<!-- PANEL 4: Event Log -->
+<div class="panel" id="event-panel">
+  <div class="panel-title">═══ EVENT LOG ═══</div>
+  <div id="event-log"></div>
+</div>
+
+<!-- Epoch End Overlay -->
+<div id="epoch-overlay">
+  <div class="divider">══════════════════════════════════</div>
+  <h1>MARKET CLOSED</h1>
+  <div class="divider">══════════════════════════════════</div>
+  <div id="epoch-tick-msg" style="color:#aaffdd;margin:8px 0;"></div>
+  <div id="epoch-winner" class="winner"></div>
+  <div id="epoch-efficiency" class="efficiency"></div>
+  <div class="lb-title">═══ FINAL LEADERBOARD ═══</div>
+  <div id="epoch-leaderboard"></div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+// ─────────────────────────────────────────
+// THREE.JS SETUP
+// ─────────────────────────────────────────
+const TILE_SIZE = 1.5;
+const GRID_W = 20;
+const CENTER_X = (GRID_W - 1) * TILE_SIZE / 2;
+const CENTER_Z = (GRID_W - 1) * TILE_SIZE / 2;
+
+const canvas = document.getElementById('canvas');
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.shadowMap.enabled = true;
+renderer.setClearColor(0x050d0a);
+
+const scene = new THREE.Scene();
+scene.fog = new THREE.Fog(0x050d0a, 40, 80);
+
+const camera = new THREE.PerspectiveCamera(55, window.innerWidth / window.innerHeight, 0.1, 200);
+camera.position.set(CENTER_X, 30, CENTER_Z + 36);
+camera.lookAt(CENTER_X, 0, CENTER_Z);
+
+// Lights
+const ambient = new THREE.AmbientLight(0x112211, 0.7);
+scene.add(ambient);
+const sun = new THREE.DirectionalLight(0x88ffbb, 1.2);
+sun.position.set(15, 30, 20);
+sun.castShadow = true;
+scene.add(sun);
+const rimLight = new THREE.DirectionalLight(0x004422, 0.4);
+rimLight.position.set(-10, 10, -10);
+scene.add(rimLight);
+
+// ─────────────────────────────────────────
+// GRID TILES
+// ─────────────────────────────────────────
+const tileGeo = new THREE.BoxGeometry(TILE_SIZE - 0.06, 0.08, TILE_SIZE - 0.06);
+const tileMat0 = new THREE.MeshStandardMaterial({ color: 0x0a1a0e, roughness: 0.9 });
+const tileMat1 = new THREE.MeshStandardMaterial({ color: 0x0f2214, roughness: 0.85 });
+
+for (let x = 0; x < GRID_W; x++) {
+  for (let z = 0; z < GRID_W; z++) {
+    const tile = new THREE.Mesh(tileGeo, (x + z) % 2 === 0 ? tileMat0 : tileMat1);
+    tile.position.set(x * TILE_SIZE, 0, z * TILE_SIZE);
+    tile.receiveShadow = true;
+    scene.add(tile);
+  }
+}
+
+// Grid border lines
+const lineMat = new THREE.LineBasicMaterial({ color: 0x00ff8822 });
+const lineGeo = new THREE.BufferGeometry();
+const lineVerts = [];
+for (let i = 0; i <= GRID_W; i++) {
+  lineVerts.push(-0.5 * TILE_SIZE + i * TILE_SIZE, 0.05, -0.5 * TILE_SIZE);
+  lineVerts.push(-0.5 * TILE_SIZE + i * TILE_SIZE, 0.05, GRID_W * TILE_SIZE - 0.5 * TILE_SIZE);
+  lineVerts.push(-0.5 * TILE_SIZE, 0.05, -0.5 * TILE_SIZE + i * TILE_SIZE);
+  lineVerts.push(GRID_W * TILE_SIZE - 0.5 * TILE_SIZE, 0.05, -0.5 * TILE_SIZE + i * TILE_SIZE);
+}
+lineGeo.setAttribute('position', new THREE.Float32BufferAttribute(lineVerts, 3));
+scene.add(new THREE.LineSegments(lineGeo, lineMat));
+
+// ─────────────────────────────────────────
+// RESOURCE CUBES
+// ─────────────────────────────────────────
+const resourceMeshes = new Map(); // resourceId → THREE.Group
+
+function createResourceMesh(resource) {
+  const group = new THREE.Group();
+
+  const geo = new THREE.BoxGeometry(0.7, 0.7, 0.7);
+  const mat = new THREE.MeshStandardMaterial({
+    color: 0x00ffff,
+    emissive: 0x003333,
+    emissiveIntensity: 0.8,
+    roughness: 0.3,
+    metalness: 0.6,
+  });
+  const mesh = new THREE.Mesh(geo, mat);
+  mesh.castShadow = true;
+  mesh.position.y = 0.45;
+
+  // Wireframe overlay
+  const wGeo = new THREE.BoxGeometry(0.75, 0.75, 0.75);
+  const wMat = new THREE.MeshBasicMaterial({ color: 0x00ffff, wireframe: true, transparent: true, opacity: 0.4 });
+  const wire = new THREE.Mesh(wGeo, wMat);
+  wire.position.y = 0.45;
+
+  // Point light for glow
+  const light = new THREE.PointLight(0x00ffff, 1.5, 3);
+  light.position.y = 0.45;
+
+  group.add(mesh, wire, light);
+  group.position.set(resource.position.x * TILE_SIZE, 0, resource.position.y * TILE_SIZE);
+  scene.add(group);
+  resourceMeshes.set(resource.resourceId, group);
+}
+
+function removeResourceMesh(resourceId) {
+  const group = resourceMeshes.get(resourceId);
+  if (group) {
+    scene.remove(group);
+    resourceMeshes.delete(resourceId);
+  }
+}
+
+// ─────────────────────────────────────────
+// AGENT AVATARS (Minecraft-style)
+// ─────────────────────────────────────────
+const agentMeshes = new Map(); // agent_id → THREE.Group
+const AGENT_COLORS = {
+  agent_A: { head: 0xFFD700, body: 0xCC9900 },
+  agent_B: { head: 0xFF4444, body: 0xCC2222 },
+  external: { head: 0x44FF44, body: 0x228822 },
+};
+
+function getAgentColors(agent_id) {
+  return AGENT_COLORS[agent_id] || AGENT_COLORS.external;
+}
+
+function createAgentMesh(agent) {
+  const group = new THREE.Group();
+  const colors = getAgentColors(agent.agent_id);
+
+  const headGeo = new THREE.BoxGeometry(0.6, 0.6, 0.6);
+  const headMat = new THREE.MeshStandardMaterial({ color: colors.head, roughness: 0.5, metalness: 0.2 });
+  const head = new THREE.Mesh(headGeo, headMat);
+  head.position.y = 1.15;
+  head.castShadow = true;
+
+  const bodyGeo = new THREE.BoxGeometry(0.6, 0.9, 0.4);
+  const bodyMat = new THREE.MeshStandardMaterial({ color: colors.body, roughness: 0.6 });
+  const body = new THREE.Mesh(bodyGeo, bodyMat);
+  body.position.y = 0.55;
+  body.castShadow = true;
+
+  // Name label (simple glow ring at feet)
+  const ringGeo = new THREE.RingGeometry(0.3, 0.4, 16);
+  const ringMat = new THREE.MeshBasicMaterial({ color: colors.head, side: THREE.DoubleSide, transparent: true, opacity: 0.6 });
+  const ring = new THREE.Mesh(ringGeo, ringMat);
+  ring.rotation.x = -Math.PI / 2;
+  ring.position.y = 0.05;
+
+  group.add(head, body, ring);
+  group.position.set(agent.position.x * TILE_SIZE, 0, agent.position.y * TILE_SIZE);
+  scene.add(group);
+  agentMeshes.set(agent.agent_id, group);
+  return group;
+}
+
+// ─────────────────────────────────────────
+// WORLD STATE HANDLERS
+// ─────────────────────────────────────────
+function updateAgents(agents) {
+  const seen = new Set();
+  for (const agent of agents) {
+    seen.add(agent.agent_id);
+    if (agent.status === 'bankrupt') {
+      if (agentMeshes.has(agent.agent_id)) {
+        scene.remove(agentMeshes.get(agent.agent_id));
+        agentMeshes.delete(agent.agent_id);
+      }
+      continue;
+    }
+    if (!agentMeshes.has(agent.agent_id)) {
+      createAgentMesh(agent);
+    }
+    const group = agentMeshes.get(agent.agent_id);
+    if (group) {
+      const targetX = agent.position.x * TILE_SIZE;
+      const targetZ = agent.position.y * TILE_SIZE;
+      group.position.x += (targetX - group.position.x) * 0.3;
+      group.position.z += (targetZ - group.position.z) * 0.3;
+      group.position.y = 0;
+    }
+  }
+
+  updateAgentPanel(agents);
+}
+
+function updateResources(resources) {
+  const seen = new Set();
+  for (const r of resources) {
+    seen.add(r.resourceId);
+    if (!resourceMeshes.has(r.resourceId)) {
+      createResourceMesh(r);
+    }
+  }
+  for (const [id] of resourceMeshes) {
+    if (!seen.has(id)) removeResourceMesh(id);
+  }
+}
+
+function updateTickCounter(tick, epochEnded) {
+  document.getElementById('tick-display').textContent = `TICK: ${String(tick).padStart(3, '0')} / 500`;
+  if (epochEnded) {
+    document.getElementById('epoch-status').textContent = 'EPOCH COMPLETE';
+    document.getElementById('epoch-status').style.color = '#FFD700';
+  }
+}
+
+function updateLeaderboard(lb) {
+  if (!lb) return;
+  let html = '';
+  if (lb.topCompanies && lb.topCompanies.length > 0) {
+    html += `<div class="panel-row"><span>Top Company:</span> ${lb.topCompanies[0].name} $${(lb.topCompanies[0].cash || 0).toFixed(2)}</div>`;
+  }
+  if (lb.topNetWorth && lb.topNetWorth.length > 0) {
+    html += `<div class="panel-row"><span>Top Net Worth:</span> ${lb.topNetWorth[0].name} $${(lb.topNetWorth[0].netWorth || 0).toFixed(2)}</div>`;
+  }
+  if (lb.topRevenue && lb.topRevenue.length > 0) {
+    html += `<div class="panel-row"><span>Top Revenue:</span> $${(lb.topRevenue[0].revenue || 0).toFixed(2)}</div>`;
+  }
+  if (lb.mostContractsCompleted && lb.mostContractsCompleted.length > 0) {
+    html += `<div class="panel-row"><span>Most Contracts:</span> ${lb.mostContractsCompleted[0].count}</div>`;
+  }
+  if (lb.mostReliableContractors && lb.mostReliableContractors.length > 0) {
+    html += `<div class="panel-row"><span>Best Contractor:</span> ${lb.mostReliableContractors[0].name} Rep:${lb.mostReliableContractors[0].reputation}</div>`;
+  }
+  document.getElementById('leaderboard-content').innerHTML = html || '<div class="panel-row" style="color:#555;">No companies yet</div>';
+}
+
+function updateMarketBoard(contracts) {
+  if (!contracts || contracts.length === 0) {
+    document.getElementById('market-content').innerHTML = '<div class="panel-row" style="color:#555;">No open contracts</div>';
+    return;
+  }
+  const html = contracts.slice(0, 5).map(c =>
+    `<div class="panel-row">Contract <span>#${c.contractId.slice(-6)}</span> | ${c.task || 'Mine Crystal'} | Reward: <span>$${(c.reward || 0).toFixed(2)}</span> | Deadline: ${c.deadline_ticks}t</div>`
+  ).join('');
+  document.getElementById('market-content').innerHTML = html;
+}
+
+function updateEventLog(events) {
+  if (!events || events.length === 0) return;
+  const html = events.slice(-8).map(e => {
+    let color = '#aaffdd';
+    if (e.includes('[TX]')) color = '#44ffff';
+    if (e.includes('[BANKRUPTCY]')) color = '#ff4444';
+    if (e.includes('[RESOURCE MINED]')) color = '#FFD700';
+    if (e.includes('WAIT')) color = '#556655';
+    return `<div style="color:${color};font-size:11px;margin:1px 0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${e}</div>`;
+  }).join('');
+  document.getElementById('event-log').innerHTML = html;
+}
+
+function updateAgentPanel(agents) {
+  const html = agents.map(a => {
+    const eb = (a.effectiveBalance || 0).toFixed(2);
+    const statusCls = 'status-' + (a.status || 'idle');
+    return `<div class="panel-row">
+      <span style="color:${a.agent_id === 'agent_A' ? '#FFD700' : a.agent_id === 'agent_B' ? '#FF4444' : '#44FF44'}">${a.name}</span>
+      $${eb} <span class="${statusCls}">[${a.status}]</span>${a.companyId ? ' 🏢' : ''}
+    </div>`;
+  }).join('');
+  document.getElementById('agent-list').innerHTML = html || '<div class="panel-row" style="color:#555;">No agents</div>';
+}
+
+function showEpochEndScreen(winner, leaderboard) {
+  const overlay = document.getElementById('epoch-overlay');
+  overlay.classList.add('active');
+
+  document.getElementById('epoch-tick-msg').textContent = `EPOCH COMPLETE`;
+
+  if (winner) {
+    document.getElementById('epoch-winner').textContent = `WINNER: ${winner.name || winner.companyId || 'Unknown'}`;
+    const eff = winner.capitalEfficiency;
+    document.getElementById('epoch-efficiency').textContent = `Capital Efficiency: ${eff ? (parseFloat(eff) * 100).toFixed(1) + '%' : 'N/A'}`;
+  } else {
+    document.getElementById('epoch-winner').textContent = 'No winner — all agents survived';
+    document.getElementById('epoch-efficiency').textContent = '';
+  }
+
+  const lbHtml = (leaderboard || []).slice(0, 8).map((c, i) =>
+    `<div class="lb-row">${i + 1}. ${c.name || c.companyId} — $${(c.cash || 0).toFixed(2)} | Contracts: ${c.contractsCompleted || 0}</div>`
+  ).join('');
+  document.getElementById('epoch-leaderboard').innerHTML = lbHtml || '<div class="lb-row">No company data</div>';
+}
+
+// ─────────────────────────────────────────
+// WEBSOCKET
+// ─────────────────────────────────────────
+function connectWS() {
+  const wsProtocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const ws = new WebSocket(wsProtocol + '//' + location.host + '/ws/spectate');
+
+  ws.onopen = () => {
+    document.getElementById('epoch-status').textContent = 'CONNECTED';
+    document.getElementById('epoch-status').style.color = '#00ff88';
+  };
+
+  ws.onclose = () => {
+    document.getElementById('epoch-status').textContent = 'RECONNECTING...';
+    document.getElementById('epoch-status').style.color = '#ff8800';
+    setTimeout(connectWS, 2000);
+  };
+
+  ws.onerror = () => {
+    document.getElementById('epoch-status').textContent = 'CONNECTION ERROR';
+    document.getElementById('epoch-status').style.color = '#ff4444';
+  };
+
+  ws.onmessage = (event) => {
+    try {
+      const msg = JSON.parse(event.data);
+      if (msg.type === 'WORLD_STATE') {
+        updateAgents(msg.agents || []);
+        updateResources((msg.grid && msg.grid.resources) ? msg.grid.resources : []);
+        updateMarketBoard(msg.openContracts || []);
+        updateLeaderboard(msg.leaderboard || {});
+        updateTickCounter(msg.tickCount || 0, msg.epochEnded);
+        updateEventLog(msg.eventLog || []);
+      }
+      if (msg.type === 'EPOCH_END') {
+        showEpochEndScreen(msg.winner, msg.leaderboard);
+      }
+      if (msg.type === 'RESOURCE_MINED') {
+        removeResourceMesh(msg.resourceId);
+      }
+    } catch (e) {
+      console.error('WS parse error', e);
+    }
+  };
+}
+
+connectWS();
+
+// ─────────────────────────────────────────
+// RENDER LOOP
+// ─────────────────────────────────────────
+let cameraAngle = 0;
+let resourceAnimTime = 0;
+
+function animate() {
+  requestAnimationFrame(animate);
+
+  cameraAngle += 0.003;
+  const radius = 37;
+  camera.position.x = CENTER_X + Math.sin(cameraAngle) * radius;
+  camera.position.z = CENTER_Z + Math.cos(cameraAngle) * radius;
+  camera.position.y = 28 + Math.sin(cameraAngle * 0.3) * 3;
+  camera.lookAt(CENTER_X, 0, CENTER_Z);
+
+  resourceAnimTime += 0.04;
+  for (const [id, group] of resourceMeshes) {
+    if (group.children[0]) {
+      group.children[0].rotation.y = resourceAnimTime;
+      group.children[0].position.y = 0.45 + Math.sin(resourceAnimTime * 1.5) * 0.08;
+      group.children[1].rotation.y = -resourceAnimTime * 0.7;
+      group.children[1].position.y = 0.45 + Math.sin(resourceAnimTime * 1.5) * 0.08;
+    }
+  }
+
+  renderer.render(scene, camera);
+}
+
+animate();
+
+// Resize handler
+window.addEventListener('resize', () => {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+});
+</script>
+</body>
+</html>
