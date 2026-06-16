@@ -319,6 +319,16 @@ function tickLoop() {
     }
   }
 
+  // Last-agent-standing: if only 1 (or 0) non-bankrupt agent remains, end immediately
+  if (!epochManager.epochEnded && AGENTS.size > 1) {
+    const alive = Array.from(AGENTS.values()).filter(a => a.status !== 'bankrupt');
+    if (alive.length <= 1) {
+      const survivor = alive[0] || null;
+      logEvent(`[ELIMINATION] ${survivor ? survivor.name + ' is the last agent standing' : 'All agents eliminated'} — game over`);
+      epochManager.endEpoch(companiesCache, survivor);
+    }
+  }
+
   epochManager.incrementTick();
 
   if (epochManager.tickCount % 10 === 0) {

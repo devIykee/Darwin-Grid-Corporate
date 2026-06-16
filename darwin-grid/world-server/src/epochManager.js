@@ -32,10 +32,10 @@ function checkEpochEnd(companies) {
   return false;
 }
 
-async function endEpoch(companies) {
+async function endEpoch(companies, lastStanding = null) {
   if (epochEnded) return;
   epochEnded = true;
-  console.log(`[EPOCH] Epoch ended at tick ${tickCount}`);
+  console.log(`[EPOCH] Epoch ended at tick ${tickCount}${lastStanding ? ' — last agent standing: ' + lastStanding.name : ''}`);
 
   let finalStats = [];
   try {
@@ -55,11 +55,23 @@ async function endEpoch(companies) {
     }));
   }
 
+  // If no companies but there's a last-standing agent, build a synthetic leaderboard entry
+  if (!finalStats.length && lastStanding) {
+    finalStats = [{
+      companyId: lastStanding.agent_id,
+      name: lastStanding.name,
+      cash: parseFloat((lastStanding.walletBalance || 0).toFixed(2)),
+      contractsCompleted: lastStanding.memory?.lastCompletedContracts?.length || 0,
+      capitalEfficiency: '1.00',
+    }];
+  }
+
   const winner = finalStats[0] || null;
   if (_broadcastFn) {
     _broadcastFn({
       type: 'EPOCH_END',
       tickCount,
+      reason: lastStanding ? 'last_standing' : (tickCount >= EPOCH_TICK_LIMIT ? 'tick_limit' : 'net_worth'),
       winner: winner
         ? {
             companyId: winner.companyId,

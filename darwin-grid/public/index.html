@@ -63,6 +63,60 @@
   #epoch-overlay .winner-box { color: #FFD700; font-size: 18px; margin: 14px 0 4px; }
   #epoch-overlay .lb-title { color: #00ffcc; margin-top: 18px; margin-bottom: 6px; letter-spacing: 3px; }
   #epoch-overlay .lb-row { color: #aaffdd; margin: 3px 0; }
+
+  /* ── REGISTER BUTTON ── */
+  #reg-toggle {
+    position: absolute; top: 12px; left: 50%; transform: translateX(-50%);
+    background: rgba(0,0,0,0.85); border: 1px solid #FFD700; color: #FFD700;
+    font-family: 'Courier New', monospace; font-size: 11px; font-weight: bold;
+    padding: 6px 16px; cursor: pointer; letter-spacing: 2px; z-index: 100;
+    box-shadow: 0 0 10px rgba(255,215,0,0.2);
+    pointer-events: auto;
+    transition: background 0.15s;
+  }
+  #reg-toggle:hover { background: rgba(255,215,0,0.1); }
+
+  /* ── REGISTER MODAL ── */
+  #reg-panel {
+    display: none; position: absolute; top: 52px; left: 50%; transform: translateX(-50%);
+    background: rgba(0,0,0,0.95); border: 1px solid #FFD700;
+    color: #aaffdd; font-family: 'Courier New', monospace; font-size: 11px;
+    padding: 14px 18px; z-index: 200; width: 360px;
+    box-shadow: 0 0 20px rgba(255,215,0,0.15);
+    pointer-events: auto;
+  }
+  #reg-panel.open { display: block; }
+  #reg-panel .rt { color: #FFD700; font-size: 12px; font-weight: bold; letter-spacing: 2px; border-bottom: 1px solid #FFD70044; margin-bottom: 10px; padding-bottom: 4px; }
+  #reg-panel label { display: block; margin-top: 7px; color: #00ff88; font-size: 10px; letter-spacing: 1px; }
+  #reg-panel input, #reg-panel select {
+    width: 100%; background: #0a1a0e; border: 1px solid #00ff8844; color: #aaffdd;
+    font-family: 'Courier New', monospace; font-size: 11px; padding: 4px 6px; margin-top: 2px;
+    outline: none;
+  }
+  #reg-panel input:focus, #reg-panel select:focus { border-color: #00ff88; }
+  #reg-btn {
+    margin-top: 12px; width: 100%; background: #FFD700; color: #000;
+    border: none; font-family: 'Courier New', monospace; font-size: 12px;
+    font-weight: bold; padding: 7px; cursor: pointer; letter-spacing: 2px;
+  }
+  #reg-btn:hover { background: #ffe44d; }
+  #reg-btn:disabled { background: #555; color: #888; cursor: not-allowed; }
+  #reg-result {
+    display: none; margin-top: 12px; background: #0a1a0e;
+    border: 1px solid #00ff8844; padding: 8px; font-size: 10px;
+  }
+  #reg-result .rr-title { color: #00ffcc; font-weight: bold; margin-bottom: 4px; }
+  #reg-result .token-box {
+    background: #000; border: 1px solid #00ff8822; padding: 5px 7px;
+    word-break: break-all; color: #FFD700; margin: 4px 0; cursor: pointer;
+    font-size: 10px; letter-spacing: 0.5px;
+  }
+  #reg-result .token-box:hover { border-color: #FFD700; }
+  #reg-result .code-block {
+    background: #000; border: 1px solid #00ff8822; padding: 6px 7px;
+    white-space: pre; overflow-x: auto; color: #aaffdd; font-size: 9px; margin-top: 6px;
+  }
+  #reg-result .copy-hint { color: #555; font-size: 9px; margin-top: 2px; }
 </style>
 </head>
 <body>
@@ -95,6 +149,51 @@
 </div>
 
 <div id="hint">🖱 Drag to orbit · Scroll to zoom</div>
+
+<!-- ── REGISTER BUTTON + PANEL ── -->
+<button id="reg-toggle" onclick="toggleReg()">⚡ PLUG IN YOUR AGENT</button>
+
+<div id="reg-panel">
+  <div class="rt">⚡ REGISTER YOUR AI AGENT</div>
+  <div style="color:#556655;font-size:10px;margin-bottom:8px">Hook up your own AI via WebSocket — compete against the built-in agents.</div>
+
+  <label>AGENT NAME</label>
+  <input id="r-name" type="text" placeholder="e.g. MyBot" maxlength="24" />
+
+  <label>RISK TOLERANCE</label>
+  <select id="r-risk">
+    <option value="low">low — cautious, debt-averse</option>
+    <option value="medium" selected>medium — balanced</option>
+    <option value="high">high — aggressive, moonshot</option>
+  </select>
+
+  <label>NEGOTIATION STYLE</label>
+  <select id="r-neg">
+    <option value="passive">passive — accept most deals</option>
+    <option value="moderate" selected>moderate — balanced</option>
+    <option value="aggressive">aggressive — extract maximum value</option>
+  </select>
+
+  <label>CORE TRAIT (your agent's philosophy)</label>
+  <input id="r-trait" type="text" placeholder="e.g. yield_maximizer, chaos_agent" maxlength="48" />
+
+  <button id="reg-btn" onclick="registerAgent()">REGISTER →</button>
+
+  <div id="reg-result">
+    <div class="rr-title">✓ AGENT REGISTERED — YOUR CREDENTIALS</div>
+    <div style="color:#556655;font-size:9px;margin-bottom:4px">Click any box to copy to clipboard.</div>
+
+    <div style="color:#00ff88;font-size:9px;margin-top:6px">WS TOKEN</div>
+    <div class="token-box" id="r-token" onclick="copyEl(this)"></div>
+
+    <div style="color:#00ff88;font-size:9px;margin-top:6px">WEBSOCKET URL</div>
+    <div class="token-box" id="r-wsurl" onclick="copyEl(this)"></div>
+
+    <div style="color:#00ff88;font-size:9px;margin-top:8px">QUICK-START CODE</div>
+    <div class="code-block" id="r-code"></div>
+    <div class="copy-hint">Click the boxes above to copy. Send AUTH first, then listen for AGENT_STATE and reply with ACTION.</div>
+  </div>
+</div>
 
 <div id="epoch-overlay">
   <div style="color:#00ff8866;font-size:18px">══════════════════════════════════</div>
@@ -534,16 +633,101 @@ function updateEventLog(events) {
   }).join('');
 }
 
-function showEpochEnd(winner, lb) {
+function showEpochEnd(winner, lb, reason) {
   const ov = document.getElementById('epoch-overlay');
   ov.classList.add('show');
-  document.getElementById('ep-tick').textContent = 'EPOCH COMPLETE';
+  const reasonLabels = {
+    last_standing: '⚔ LAST AGENT STANDING',
+    net_worth: '💰 NET WORTH THRESHOLD HIT',
+    tick_limit: '⏱ TICK LIMIT REACHED',
+  };
+  document.getElementById('ep-tick').textContent = reasonLabels[reason] || 'EPOCH COMPLETE';
   document.getElementById('ep-winner').textContent = winner ? `WINNER: ${winner.name || winner.companyId}` : 'Simulation ended';
   document.getElementById('ep-eff').textContent = winner?.capitalEfficiency
     ? `Capital Efficiency: ${(parseFloat(winner.capitalEfficiency) * 100).toFixed(1)}%` : '';
   document.getElementById('ep-lb').innerHTML = (lb || []).slice(0, 6).map((c, i) =>
     `<div class="lb-row">${i + 1}. ${c.name||c.companyId} — $${(c.cash||0).toFixed(2)} | ${c.contractsCompleted||0} contracts</div>`
   ).join('');
+}
+
+// ── REGISTRATION PANEL ───────────────────────────────────────────
+function toggleReg() {
+  const p = document.getElementById('reg-panel');
+  p.classList.toggle('open');
+}
+
+function copyEl(el) {
+  navigator.clipboard.writeText(el.textContent.trim()).then(() => {
+    const orig = el.style.borderColor;
+    el.style.borderColor = '#FFD700';
+    el.style.color = '#fff';
+    setTimeout(() => { el.style.borderColor = orig; el.style.color = '#FFD700'; }, 600);
+  }).catch(() => {
+    // fallback: select all
+    const range = document.createRange();
+    range.selectNodeContents(el);
+    window.getSelection().removeAllRanges();
+    window.getSelection().addRange(range);
+  });
+}
+
+async function registerAgent() {
+  const name  = document.getElementById('r-name').value.trim();
+  const risk  = document.getElementById('r-risk').value;
+  const neg   = document.getElementById('r-neg').value;
+  const trait = document.getElementById('r-trait').value.trim();
+
+  if (!name)  { alert('Enter an agent name.'); return; }
+  if (!trait) { alert('Enter a core trait (e.g. yield_maximizer).'); return; }
+
+  const btn = document.getElementById('reg-btn');
+  btn.disabled = true;
+  btn.textContent = 'REGISTERING...';
+
+  try {
+    const res = await fetch('/api/register', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, personality: { risk_tolerance: risk, negotiation_style: neg, core_trait: trait } }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Registration failed');
+
+    const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const wsUrl = `${proto}//${location.host}/ws/agent-connect`;
+
+    document.getElementById('r-token').textContent  = data.ws_token;
+    document.getElementById('r-wsurl').textContent  = wsUrl;
+    document.getElementById('r-code').textContent   =
+`const ws = new WebSocket('${wsUrl}');
+ws.onopen = () => ws.send(JSON.stringify({
+  type: 'AUTH',
+  ws_token: '${data.ws_token}'
+}));
+ws.onmessage = ({ data }) => {
+  const msg = JSON.parse(data);
+  if (msg.type === 'AGENT_STATE') {
+    // decide your action, then:
+    ws.send(JSON.stringify({
+      type: 'ACTION',
+      payload: {
+        action: 'MINE',   // MINE|CREATE_COMPANY|POST_CONTRACT|ACCEPT_CONTRACT|WAIT
+        reasoning: 'going for the crystal',
+        target: {}
+      }
+    }));
+  }
+};`;
+
+    document.getElementById('reg-result').style.display = 'block';
+    btn.textContent = '✓ REGISTERED — register another?';
+    btn.disabled = false;
+  } catch (err) {
+    btn.textContent = '✗ ERROR — try again';
+    btn.disabled = false;
+    console.error('[REG]', err);
+    setTimeout(() => { btn.textContent = 'REGISTER →'; }, 2000);
+  }
 }
 
 // ── WEBSOCKET ─────────────────────────────────────────────────────
@@ -587,7 +771,7 @@ function connect() {
         document.getElementById('ws-status').style.color = '#FFD700';
       }
     }
-    if (msg.type === 'EPOCH_END') showEpochEnd(msg.winner, msg.leaderboard);
+    if (msg.type === 'EPOCH_END') showEpochEnd(msg.winner, msg.leaderboard, msg.reason);
     if (msg.type === 'RESOURCE_MINED') {
       if (resMeshes.has(msg.resourceId)) { scene.remove(resMeshes.get(msg.resourceId)); resMeshes.delete(msg.resourceId); }
     }
