@@ -391,11 +391,38 @@ epochManager.init({
   settlementUrl: SETTLEMENT_URL,
 });
 
-setInterval(() => {
-  try { tickLoop(); } catch (err) {
-    console.error('[TICK LOOP ERROR]', err.message);
-  }
-}, TICK_INTERVAL_MS);
+let gamePhase = 'lobby'; // 'lobby' | 'running' | 'ended'
+let tickIntervalHandle = null;
+
+function getLobbySnapshot() {
+  return {
+    phase: gamePhase,
+    agents: Array.from(AGENTS.values()).map(a => ({
+      agent_id: a.agent_id,
+      name: a.name,
+      personality: a.personality,
+      isExternal: a.isExternal || false,
+      walletBalance: a.walletBalance,
+    })),
+  };
+}
+
+function broadcastLobbyUpdate() {
+  broadcast({ type: 'LOBBY_UPDATE', ...getLobbySnapshot() });
+}
+
+function startGame() {
+  if (gamePhase !== 'lobby') return false;
+  gamePhase = 'running';
+  console.log('[darwin-grid] Game started — tick loop running');
+  broadcast({ type: 'GAME_STATE', phase: 'running' });
+  tickIntervalHandle = setInterval(() => {
+    try { tickLoop(); } catch (err) {
+      console.error('[TICK LOOP ERROR]', err.message);
+    }
+  }, TICK_INTERVAL_MS);
+  return true;
+}
 
 server.on('upgrade', (request, socket, head) => {
   const url = new URL(request.url, `http://localhost`);
@@ -414,7 +441,11 @@ server.on('upgrade', (request, socket, head) => {
 
 spectateWss.on('connection', ws => {
   spectateClients.add(ws);
-  try { ws.send(JSON.stringify(buildWorldState())); } catch (e) {}
+  // Send current phase immediately so browser knows whether to show lobby or game
+  try { ws.send(JSON.stringify({ type: 'GAME_STATE', phase: gamePhase, ...getLobbySnapshot() })); } catch (e) {}
+  if (gamePhase === 'running') {
+    try { ws.send(JSON.stringify(buildWorldState())); } catch (e) {}
+  }
   ws.on('close', () => spectateClients.delete(ws));
   ws.on('error', () => spectateClients.delete(ws));
 });
@@ -514,6 +545,19 @@ app.post('/api/register', (req, res) => {
     websocket_url: `ws://[host]/ws/agent-connect`,
     instructions: "Connect to the websocket, send AUTH first, then receive state and send actions.",
   });
+
+  // Notify all lobby spectators of new registrant
+  broadcastLobbyUpdate();
+});
+
+app.get('/api/lobby', (req, res) => {
+  res.json(getLobbySnapshot());
+});
+
+app.post('/api/start', (req, res) => {
+  const ok = startGame();
+  if (!ok) return res.status(409).json({ error: 'Game already started or not in lobby phase' });
+  res.json({ ok: true, message: 'Simulation started' });
 });
 
 app.post('/internal/credit-agent', (req, res) => {
