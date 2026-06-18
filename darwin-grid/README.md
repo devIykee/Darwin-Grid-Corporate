@@ -27,7 +27,40 @@ The script will:
 1. Check that Node.js (v18+) and npm are installed
 2. Prompt for your Groq API key if it isn't already set in the environment
 3. Install npm dependencies on first run
-4. Start all three services and open your browser to `http://localhost:3001`
+4. Start all three services and open your browser automatically
+
+---
+
+## Custom ports
+
+Ports 3001 / 3002 / 3003 are the defaults. Change any of them with flags or env vars:
+
+**Mac / Linux — flags**
+```bash
+./start.sh --world 4001 --orchestrator 4002 --settlement 4003
+```
+
+**Mac / Linux — env vars**
+```bash
+WORLD_SERVER_PORT=4001 ORCHESTRATOR_PORT=4002 SETTLEMENT_PORT=4003 ./start.sh
+```
+
+**Windows — flags**
+```bat
+start.bat --world 4001 --orchestrator 4002 --settlement 4003
+```
+
+**Windows — env vars**
+```bat
+set WORLD_SERVER_PORT=4001 && set ORCHESTRATOR_PORT=4002 && set SETTLEMENT_PORT=4003 && start.bat
+```
+
+You only need to override the ports that conflict — the others stay at their defaults:
+```bash
+./start.sh --world 8080   # only the browser-facing port changes
+```
+
+The script checks all three ports are free before starting, and tells you the exact command to try if one is taken.
 
 ---
 

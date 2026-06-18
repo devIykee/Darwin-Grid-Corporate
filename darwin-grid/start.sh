@@ -14,6 +14,39 @@ echo -e "${BOLD}${GREEN}  ║   THE DARWIN GRID — CORPORATE EDITION   ║${RES
 echo -e "${BOLD}${GREEN}  ╚══════════════════════════════════════════╝${RESET}"
 echo ""
 
+# ── Port configuration ─────────────────────────────────────
+# Defaults: 3001 / 3002 / 3003
+# Override with env vars:
+#   WORLD_SERVER_PORT=4001 ORCHESTRATOR_PORT=4002 SETTLEMENT_PORT=4003 ./start.sh
+# Or with flags:
+#   ./start.sh --world 4001 --orchestrator 4002 --settlement 4003
+
+P_WORLD="${WORLD_SERVER_PORT:-3001}"
+P_ORCH="${ORCHESTRATOR_PORT:-3002}"
+P_SETTLE="${SETTLEMENT_PORT:-3003}"
+
+# Parse optional --world / --orchestrator / --settlement flags
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --world|-w)         P_WORLD="$2";  shift 2 ;;
+    --orchestrator|-o)  P_ORCH="$2";   shift 2 ;;
+    --settlement|-s)    P_SETTLE="$2"; shift 2 ;;
+    --help|-h)
+      echo -e "Usage: ./start.sh [options]"
+      echo -e "  -w, --world         PORT   World server port   (default 3001)"
+      echo -e "  -o, --orchestrator  PORT   Orchestrator port   (default 3002)"
+      echo -e "  -s, --settlement    PORT   Settlement port     (default 3003)"
+      echo -e ""
+      echo -e "Or set env vars: WORLD_SERVER_PORT, ORCHESTRATOR_PORT, SETTLEMENT_PORT"
+      exit 0 ;;
+    *) echo -e "${RED}Unknown option: $1${RESET}"; exit 1 ;;
+  esac
+done
+
+export WORLD_SERVER_PORT="$P_WORLD"
+export ORCHESTRATOR_PORT="$P_ORCH"
+export SETTLEMENT_PORT="$P_SETTLE"
+
 # ── Node.js check ──────────────────────────────────────────
 if ! command -v node &>/dev/null; then
   echo -e "${RED}✗ Node.js is not installed.${RESET}"
@@ -21,12 +54,11 @@ if ! command -v node &>/dev/null; then
   exit 1
 fi
 
-NODE_VER=$(node -e "process.exit(parseInt(process.version.slice(1)) < 18 ? 1 : 0)" 2>/dev/null && echo ok || echo fail)
-if [ "$NODE_VER" = "fail" ]; then
+node -e "if(parseInt(process.version.slice(1))<18){process.exit(1)}" 2>/dev/null || {
   echo -e "${RED}✗ Node.js v18 or later is required (you have $(node --version)).${RESET}"
   echo -e "  Download the latest LTS from ${CYAN}https://nodejs.org${RESET}"
   exit 1
-fi
+}
 echo -e "${GREEN}✓ Node.js $(node --version)${RESET}"
 
 # ── npm check ──────────────────────────────────────────────
@@ -72,28 +104,31 @@ fi
 # ── Port availability check ────────────────────────────────
 check_port() {
   if lsof -i ":$1" -t &>/dev/null 2>&1 || ss -tlnp "sport = :$1" 2>/dev/null | grep -q LISTEN; then
-    echo -e "${RED}✗ Port $1 is already in use. Stop the process using it and try again.${RESET}"
+    echo -e "${RED}✗ Port $1 is already in use. Stop the process using it or choose a different port.${RESET}"
+    echo -e "  Tip: run with a different port — e.g. ${CYAN}./start.sh --world $((P_WORLD+10)) --orchestrator $((P_ORCH+10)) --settlement $((P_SETTLE+10))${RESET}"
     exit 1
   fi
 }
-for PORT in 3001 3002 3003; do check_port $PORT; done
-echo -e "${GREEN}✓ Ports 3001 / 3002 / 3003 are free${RESET}"
+check_port "$P_WORLD"
+check_port "$P_ORCH"
+check_port "$P_SETTLE"
+echo -e "${GREEN}✓ Ports $P_WORLD / $P_ORCH / $P_SETTLE are free${RESET}"
 
 # ── Launch ─────────────────────────────────────────────────
 echo ""
 echo -e "${BOLD}${GREEN}  ▶ Starting the simulation...${RESET}"
-echo -e "${CYAN}  World server  → http://localhost:3001${RESET}  ← open this in your browser"
-echo -e "${CYAN}  Orchestrator  → http://localhost:3002${RESET}"
-echo -e "${CYAN}  Settlement    → http://localhost:3003${RESET}"
+echo -e "${CYAN}  World server  → http://localhost:${P_WORLD}${RESET}  ← open this in your browser"
+echo -e "${CYAN}  Orchestrator  → http://localhost:${P_ORCH}${RESET}"
+echo -e "${CYAN}  Settlement    → http://localhost:${P_SETTLE}${RESET}"
 echo ""
 echo -e "  Press ${BOLD}Ctrl+C${RESET} to stop."
 echo ""
 
 # Try to open browser automatically
 if command -v open &>/dev/null; then
-  (sleep 2 && open "http://localhost:3001") &
+  (sleep 2 && open "http://localhost:${P_WORLD}") &
 elif command -v xdg-open &>/dev/null; then
-  (sleep 2 && xdg-open "http://localhost:3001") &
+  (sleep 2 && xdg-open "http://localhost:${P_WORLD}") &
 fi
 
 npm start
