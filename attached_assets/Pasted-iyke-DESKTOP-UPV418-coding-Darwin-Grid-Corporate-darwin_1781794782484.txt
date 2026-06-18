@@ -1,0 +1,37 @@
+iyke@DESKTOP-UPV418:~/coding/Darwin-Grid-Corporate/darwin-grid$ rm -rf node_modules world-server/node_modules agent-orchestrator/node_modules circle-settlement/node_modules
+./start.sh --world 4001 --orchestrator 4002 --settlement 4003
+
+
+  ╔══════════════════════════════════════════╗
+  ║   THE DARWIN GRID — CORPORATE EDITION   ║
+  ╚══════════════════════════════════════════╝
+
+✓ Node.js v24.16.0
+✓ npm 11.13.0
+
+⚠  GROQ_API_KEY is not set.
+   Get a free key at https://console.groq.com
+   Paste your key now (or press Enter to run without AI):   Running without key — agents will fall back to WAIT each tick.
+
+⟳  Installing dependencies (first run only)...
+  ⟳ root (concurrently)
+npm error code ENOTFOUND
+npm error syscall getaddrinfo
+npm error errno ENOTFOUND
+npm error network request to http://package-firewall.replit.local/npm/yargs-parser/-/yargs-parser-21.1.1.tgz failed, reason: getaddrinfo ENOTFOUND package-firewall.replit.local
+npm error network This is a problem related to network connectivity.
+npm error network In most cases you are behind a proxy or have bad network settings.
+npm error network
+npm error network If you are behind a proxy, please make sure that the 'proxy' config is set properly.  See: 'npm help config'
+npm error A complete log of this run can be found in: /home/iyke/.npm/_logs/2026-06-18T14_55_34_062Z-debug-0.log
+npm error code ENOTFOUND
+npm error syscall getaddrinfo
+npm error errno ENOTFOUND
+npm error network request to http://package-firewall.replit.local/npm/yargs-parser/-/yargs-parser-21.1.1.tgz failed, reason: getaddrinfo ENOTFOUND package-firewall.replit.local
+npm error network This is a problem related to network connectivity.
+npm error network In most cases you are behind a proxy or have bad network settings.
+npm error network
+npm error network If you are behind a proxy, please make sure that the 'proxy' config is set properly.  See: 'npm help config'
+npm error A complete log of this run can be found in: /home/iyke/.npm/_logs/2026-06-18T14_56_49_804Z-debug-0.log
+✗ Failed to install root (concurrently). See errors above.
+iyke@DESKTOP-UPV418:~/coding/Darwin-Grid-Corporate/darwin-grid$

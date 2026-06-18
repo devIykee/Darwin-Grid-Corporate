@@ -100,9 +100,9 @@ if "%NEED_INSTALL%"=="1" (
         if not exist "%%D\node_modules" (
             echo   Installing %%D...
             pushd "%%D"
-            call npm install --no-workspaces --no-fund --no-audit
+            call npm install --no-workspaces --registry https://registry.npmjs.org --no-fund --no-audit
             if errorlevel 1 (
-                call npm install --no-workspaces --no-fund --no-audit --legacy-peer-deps
+                call npm install --no-workspaces --registry https://registry.npmjs.org --no-fund --no-audit --legacy-peer-deps
                 if errorlevel 1 (
                     echo [ERROR] Failed to install %%D. See errors above.
                     popd & pause & exit /b 1

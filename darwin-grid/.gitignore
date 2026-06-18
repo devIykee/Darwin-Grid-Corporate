@@ -1,0 +1,6 @@
+node_modules/
+
+# Lock files are excluded because they get generated with environment-specific
+# registry URLs (e.g. Replit's internal proxy) that break installs on other machines.
+# npm will regenerate a clean lockfile on first install.
+package-lock.json

@@ -96,11 +96,11 @@ install_pkg() {
   local dir="$1" label="$2"
   if [ ! -d "$dir/node_modules" ] || [ "$dir/package.json" -nt "$dir/node_modules/.package-lock.json" ]; then
     echo -e "${CYAN}  ⟳ $label${RESET}"
-    # --no-workspaces stops npm 11 from entering workspace-install mode,
-    # which has a bug ("Exit handler never called!") when invoked from
-    # inside a directory whose ancestor package.json declares workspaces.
-    (cd "$dir" && npm install --no-workspaces --no-fund --no-audit 2>&1) || \
-    (cd "$dir" && npm install --no-workspaces --no-fund --no-audit --legacy-peer-deps 2>&1) || {
+    # --no-workspaces: stops npm 11 triggering its broken workspace-install mode.
+    # --registry: forces the public npm registry so Replit-internal proxy URLs
+    #   baked into any committed package-lock.json never block an external install.
+    (cd "$dir" && npm install --no-workspaces --registry https://registry.npmjs.org --no-fund --no-audit 2>&1) || \
+    (cd "$dir" && npm install --no-workspaces --registry https://registry.npmjs.org --no-fund --no-audit --legacy-peer-deps 2>&1) || {
       echo -e "${RED}✗ Failed to install $label. See errors above.${RESET}"
       exit 1
     }
