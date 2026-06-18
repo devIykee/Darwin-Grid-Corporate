@@ -48,8 +48,12 @@ cd /d "%~dp0"
 if not exist "node_modules" (
     echo.
     echo [INFO] Installing dependencies ^(first run only^)...
-    call npm install --silent
-    if errorlevel 1 ( echo [ERROR] npm install failed. & pause & exit /b 1 )
+    call npm install
+    if errorlevel 1 (
+        echo [WARN] Retrying with --legacy-peer-deps...
+        call npm install --legacy-peer-deps
+        if errorlevel 1 ( echo [ERROR] npm install failed. See errors above. & pause & exit /b 1 )
+    )
     echo [OK] Dependencies installed
 ) else (
     echo [OK] Dependencies already installed

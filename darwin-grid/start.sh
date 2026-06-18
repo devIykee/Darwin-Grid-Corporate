@@ -60,7 +60,10 @@ cd "$SCRIPT_DIR"
 if [ ! -d "node_modules" ] || [ "package.json" -nt "node_modules/.package-lock.json" ]; then
   echo ""
   echo -e "${CYAN}⟳  Installing dependencies (first run only)...${RESET}"
-  npm install --silent
+  if ! npm install; then
+    echo -e "${YELLOW}  Retrying with --legacy-peer-deps...${RESET}"
+    npm install --legacy-peer-deps || { echo -e "${RED}✗ npm install failed. Check the errors above.${RESET}"; exit 1; }
+  fi
   echo -e "${GREEN}✓ Dependencies installed${RESET}"
 else
   echo -e "${GREEN}✓ Dependencies already installed${RESET}"
