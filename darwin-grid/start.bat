@@ -82,17 +82,36 @@ if "%GROQ_API_KEY%"=="" (
 )
 
 :: ── Install dependencies ───────────────────────────────────
+:: Install each package individually — avoids an npm 11 workspace bug
+:: ("Exit handler never called!") that can occur on some platforms.
 cd /d "%~dp0"
-if not exist "node_modules" (
+
+set NEED_INSTALL=0
+if not exist "node_modules"                  set NEED_INSTALL=1
+if not exist "world-server\node_modules"     set NEED_INSTALL=1
+if not exist "agent-orchestrator\node_modules" set NEED_INSTALL=1
+if not exist "circle-settlement\node_modules" set NEED_INSTALL=1
+
+if "%NEED_INSTALL%"=="1" (
     echo.
     echo [INFO] Installing dependencies ^(first run only^)...
-    call npm install
-    if errorlevel 1 (
-        echo [WARN] Retrying with --legacy-peer-deps...
-        call npm install --legacy-peer-deps
-        if errorlevel 1 ( echo [ERROR] npm install failed. See errors above. & pause & exit /b 1 )
+
+    for %%D in (. world-server agent-orchestrator circle-settlement) do (
+        if not exist "%%D\node_modules" (
+            echo   Installing %%D...
+            pushd "%%D"
+            call npm install --no-fund --no-audit
+            if errorlevel 1 (
+                call npm install --no-fund --no-audit --legacy-peer-deps
+                if errorlevel 1 (
+                    echo [ERROR] Failed to install %%D. See errors above.
+                    popd & pause & exit /b 1
+                )
+            )
+            popd
+        )
     )
-    echo [OK] Dependencies installed
+    echo [OK] All dependencies installed
 ) else (
     echo [OK] Dependencies already installed
 )

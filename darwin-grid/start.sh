@@ -89,14 +89,34 @@ fi
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-if [ ! -d "node_modules" ] || [ "package.json" -nt "node_modules/.package-lock.json" ]; then
+# Install each package individually — avoids an npm 11 workspace bug
+# ("Exit handler never called!") that occurs when running npm install at the
+# workspace root on some platforms.
+install_pkg() {
+  local dir="$1" label="$2"
+  if [ ! -d "$dir/node_modules" ] || [ "$dir/package.json" -nt "$dir/node_modules/.package-lock.json" ]; then
+    echo -e "${CYAN}  ⟳ $label${RESET}"
+    (cd "$dir" && npm install --no-fund --no-audit 2>&1) || \
+    (cd "$dir" && npm install --no-fund --no-audit --legacy-peer-deps 2>&1) || {
+      echo -e "${RED}✗ Failed to install $label. See errors above.${RESET}"
+      exit 1
+    }
+  fi
+}
+
+NEED_INSTALL=false
+for dir in "." "world-server" "agent-orchestrator" "circle-settlement"; do
+  [ ! -d "$dir/node_modules" ] && NEED_INSTALL=true
+done
+
+if $NEED_INSTALL; then
   echo ""
   echo -e "${CYAN}⟳  Installing dependencies (first run only)...${RESET}"
-  if ! npm install; then
-    echo -e "${YELLOW}  Retrying with --legacy-peer-deps...${RESET}"
-    npm install --legacy-peer-deps || { echo -e "${RED}✗ npm install failed. Check the errors above.${RESET}"; exit 1; }
-  fi
-  echo -e "${GREEN}✓ Dependencies installed${RESET}"
+  install_pkg "."                  "root (concurrently)"
+  install_pkg "world-server"       "world-server"
+  install_pkg "agent-orchestrator" "agent-orchestrator"
+  install_pkg "circle-settlement"  "circle-settlement"
+  echo -e "${GREEN}✓ All dependencies installed${RESET}"
 else
   echo -e "${GREEN}✓ Dependencies already installed${RESET}"
 fi
